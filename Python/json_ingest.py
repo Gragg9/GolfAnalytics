@@ -7,10 +7,12 @@ from pathlib import Path
 @dataclass
 class ParsedHole:
     hole: int
+    par: int
     strokes: int
 
     putts: int | None
     penalties: int
+    handicap_score: int | None
     fairway_outcome: str | None
 
 
@@ -29,7 +31,6 @@ class ParsedRound:
     end_time: datetime
 
     tee_box: str
-    score_type: str
 
     tee_rating: float
     tee_slope: int
@@ -54,25 +55,34 @@ def build_course_lookup(data: dict) -> dict[int, dict]:
     }
 
 
-def parse_holes(scorecard: dict) -> list[ParsedHole]:
+def parse_holes(
+    scorecard: dict,
+    course_snapshot: dict
+) -> list[ParsedHole]:
     """
     Parse all completed holes for a scorecard.
     """
 
     holes = []
+    hole_pars = course_snapshot["holePars"]
 
     for hole in scorecard["holes"]:
 
-        # Skip holes that were not played
         if "strokes" not in hole:
             continue
 
+        hole_number = hole["number"]
+
+        par = int(hole_pars[hole_number - 1])
+
         holes.append(
             ParsedHole(
-                hole=hole["number"],
+                hole=hole_number,
+                par=par,
                 strokes=hole["strokes"],
                 putts=hole.get("putts"),
                 penalties=hole.get("penalties", 0),
+                handicap_score=hole.get("handicapScore"),
                 fairway_outcome=hole.get("fairwayShotOutcome"),
             )
         )
@@ -106,14 +116,16 @@ def parse_round(
         ),
 
         tee_box=scorecard["teeBox"],
-        score_type=scorecard["scoreType"],
 
         tee_rating=scorecard["teeBoxRating"],
         tee_slope=scorecard["teeBoxSlope"],
 
         holes_completed=scorecard["holesCompleted"],
 
-        holes=parse_holes(scorecard),
+        holes=parse_holes(
+            scorecard,
+            course
+),
     )
 
 
@@ -139,7 +151,6 @@ def round_to_dict(r: ParsedRound) -> dict:
         "start_time": r.start_time,
         "end_time": r.end_time,
         "tee_box": r.tee_box,
-        "score_type": r.score_type,
         "tee_rating": r.tee_rating,
         "tee_slope": r.tee_slope,
         "holes_completed": r.holes_completed,
@@ -151,9 +162,11 @@ def holes_to_dicts(r: ParsedRound) -> list[dict]:
         {
             "round_id": r.round_id,
             "hole": h.hole,
+            "par": h.par,
             "strokes": h.strokes,
             "putts": h.putts,
             "penalties": h.penalties,
+            "handicap_score": h.handicap_score,
             "fairway_outcome": h.fairway_outcome,
         }
         for h in r.holes
@@ -162,7 +175,7 @@ def holes_to_dicts(r: ParsedRound) -> list[dict]:
 def main():
 
     data_dir = Path(
-        r"C:\Users\gragg\Projects\GolfAnalytics\Data"
+        r"C:\Users\gragg\Projects\enhanced_garmin_golf_analytics\Data"
     )
 
     json_files = sorted(data_dir.glob("*.json"))
@@ -172,13 +185,14 @@ def main():
             f"No JSON files found in {data_dir}"
         )
 
-    all_rounds = []
-
     for json_file in json_files:
 
         rounds = parse_export(json_file)
 
-        all_rounds.extend(rounds)
+        print(
+            f"Parsed {len(rounds)} rounds from {json_file.name}"
+        )
 
 
-main()
+if __name__ == "__main__":
+    main()

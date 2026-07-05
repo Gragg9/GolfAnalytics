@@ -4,8 +4,8 @@ from pathlib import Path
 from json_ingest import parse_export, round_to_dict, holes_to_dicts
 
 
-DATABASE_PATH = r"C:\Users\gragg\Projects\GolfAnalytics\DB\golf.duckdb"
-DATA_DIR = Path(r"C:\Users\gragg\Projects\GolfAnalytics\Data")
+DATABASE_PATH = r"C:\Users\gragg\Projects\enhanced_garmin_golf_analytics\DB\golf.duckdb"
+DATA_DIR = Path(r"C:\Users\gragg\Projects\enhanced_garmin_golf_analytics\Data")
 
 
 def load_rounds(con, rounds):
@@ -24,15 +24,14 @@ def load_rounds(con, rounds):
             start_time,
             end_time,
             tee_box,
-            score_type,
             tee_rating,
             tee_slope,
             holes_completed
         )
         VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
-        """,
+                """,
         [
             (
                 r["round_id"],
@@ -43,7 +42,6 @@ def load_rounds(con, rounds):
                 r["start_time"],
                 r["end_time"],
                 r["tee_box"],
-                r["score_type"],
                 r["tee_rating"],
                 r["tee_slope"],
                 r["holes_completed"],
@@ -66,22 +64,26 @@ def load_holes(con, rounds):
         INSERT OR REPLACE INTO holes (
             round_id,
             hole,
+            par,
             strokes,
             putts,
             penalties,
+            handicap_score,
             fairway_outcome
         )
         VALUES (
-            ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?
         )
         """,
         [
             (
                 h["round_id"],
                 h["hole"],
+                h["par"],
                 h["strokes"],
                 h["putts"],
                 h["penalties"],
+                h["handicap_score"],
                 h["fairway_outcome"],
             )
             for h in hole_rows
@@ -90,40 +92,47 @@ def load_holes(con, rounds):
 
 
 def main():
+
     con = duckdb.connect(DATABASE_PATH)
 
     json_files = sorted(DATA_DIR.glob("*.json"))
 
     if not json_files:
-        raise FileNotFoundError(f"No JSON files found in {DATA_DIR}")
-
-    all_rounds = []
-
-    for file in json_files:
-        print(f"Loading {file.name}...")
-
-        rounds = parse_export(str(file))
-        all_rounds.extend(rounds)
-
-    print(f"Total rounds loaded from JSON: {len(all_rounds)}")
-
-    # Optional: wrap in transaction for speed + safety
-    con.execute("BEGIN TRANSACTION")
+        raise FileNotFoundError(
+            f"No JSON files found in {DATA_DIR}"
+        )
 
     try:
-        load_rounds(con, all_rounds)
-        load_holes(con, all_rounds)
+
+        con.execute("BEGIN TRANSACTION")
+
+        total_rounds = 0
+        total_holes = 0
+
+        for file in json_files:
+
+            print(f"Loading {file.name}...")
+
+            rounds = parse_export(str(file))
+
+            total_rounds += len(rounds)
+            total_holes += sum(len(r.holes) for r in rounds)
+
+            load_rounds(con, rounds)
+            load_holes(con, rounds)
 
         con.execute("COMMIT")
 
-    except Exception as e:
+    except Exception:
         con.execute("ROLLBACK")
-        raise e
+        raise
 
     finally:
         con.close()
 
-    print("Load complete.")
+    print(f"Loaded {total_rounds} rounds.")
+    print(f"Loaded {total_holes} holes.")
+    print("Load complete.")         
 
 
 if __name__ == "__main__":
