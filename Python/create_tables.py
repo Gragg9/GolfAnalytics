@@ -5,8 +5,62 @@ DATABASE_PATH = r"C:\Users\gragg\Projects\enhanced_garmin_golf_analytics\DB\golf
 con = duckdb.connect(DATABASE_PATH)
 
 # ------------------------------------------------------------------
-# Create rounds table
+# Create rounds_staging table
 # ------------------------------------------------------------------
+
+con.execute("""
+CREATE TABLE IF NOT EXISTS rounds_stage (
+    round_id        BIGINT PRIMARY KEY,
+    course_id       BIGINT NOT NULL,
+
+    course          VARCHAR NOT NULL,
+    city            VARCHAR,
+    state           VARCHAR,
+
+    start_time      TIMESTAMP NOT NULL,
+    end_time        TIMESTAMP NOT NULL,
+
+    tee_box         VARCHAR,
+
+    tee_rating      DOUBLE,
+    tee_slope       INTEGER,
+
+    holes_completed INTEGER NOT NULL,
+
+    temp_f          DOUBLE,
+    wind_speed_mph  DOUBLE,
+    precip_mm       DOUBLE,
+    steps           INTEGER,
+
+    loaded_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+""")
+
+# ------------------------------------------------------------------
+# Create holes_staging table
+# ------------------------------------------------------------------
+
+con.execute("""
+CREATE TABLE IF NOT EXISTS holes_stage (
+    round_id         BIGINT NOT NULL,
+
+    hole             INTEGER NOT NULL,
+    par              INTEGER NOT NULL,
+    strokes          INTEGER NOT NULL,
+
+    putts            INTEGER,
+    penalties        INTEGER,
+    hole_handicap    INTEGER,
+    fairway_outcome  VARCHAR,
+
+    loaded_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (round_id, hole)
+);
+            
+
+""")
+
 
 con.execute("""
 CREATE TABLE IF NOT EXISTS rounds (
@@ -27,7 +81,14 @@ CREATE TABLE IF NOT EXISTS rounds (
 
     holes_completed INTEGER NOT NULL,
 
-    loaded_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    temp_f          DOUBLE,
+    wind_speed_mph  DOUBLE,
+    precip_mm       DOUBLE,
+    
+    steps           INTEGER,
+            
+    course_rank     INTEGER,
+    handicap_diff   DOUBLE, 
 );
 """)
 
@@ -45,13 +106,17 @@ CREATE TABLE IF NOT EXISTS holes (
 
     putts            INTEGER,
     penalties        INTEGER,
-    handicap_score   INTEGER,
+    hole_handicap    INTEGER,
     fairway_outcome  VARCHAR,
-
-    loaded_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        
+    GIR              BOOLEAN,
+    BGIR             BOOLEAN,
+    strokes_received INT
 
     PRIMARY KEY (round_id, hole)
 );
+            
+
 """)
 
 print("Database schema created successfully.")

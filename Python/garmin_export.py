@@ -1,10 +1,15 @@
+import sys
+
+print(sys.executable)
+print(sys.version)
+
 from playwright.sync_api import sync_playwright
 import json
 import time
 import os
 import sys
 
-OUTPUT_DIR = r"C:\Users\gragg\Projects\GolfAnalytics\Data"
+OUTPUT_DIR = r"C:\Users\gragg\Projects\enhanced_garmin_golf_analytics\Data"
 USER_DATA_DIR = r"C:\Users\gragg\garmin-automation\User Data"
 PROFILE_DIR = "Profile 5"
 DELAY_SECONDS = 2
@@ -30,22 +35,21 @@ def save_checkpoint(scorecard_id):
         json.dump({"last_scorecard_id": scorecard_id}, f, indent=2)
 
 
-def refresh_login():
+def refresh_login(p):
     print("\n--- Session expired or invalid. Refreshing login. ---")
-    with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=USER_DATA_DIR,
-            headless=False,
-            channel="chrome",
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                f"--profile-directory={PROFILE_DIR}",
-            ],
-        )
-        page = context.pages[0] if context.pages else context.new_page()
-        page.goto("https://connect.garmin.com/signin")
-        input("Log in manually in the opened window, then press Enter here...")
-        context.close()
+    context = p.chromium.launch_persistent_context(
+        user_data_dir=USER_DATA_DIR,
+        headless=False,
+        channel="chrome",
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            f"--profile-directory={PROFILE_DIR}",
+        ],
+    )
+    page = context.pages[0] if context.pages else context.new_page()
+    page.goto("https://connect.garmin.com/signin")
+    input("Log in manually in the opened window, then press Enter here...")
+    context.close()
     print("--- Login refreshed. ---\n")
 
 
@@ -131,7 +135,7 @@ def main():
 
                 if not refreshed_this_round:
                     context.close()
-                    refresh_login()
+                    refresh_login(p)          # <-- pass the existing Playwright instance
                     refreshed_this_round = True
                     context = p.chromium.launch_persistent_context(
                         user_data_dir=USER_DATA_DIR,

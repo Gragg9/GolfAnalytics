@@ -8,14 +8,14 @@ DATABASE_PATH = r"C:\Users\gragg\Projects\enhanced_garmin_golf_analytics\DB\golf
 DATA_DIR = Path(r"C:\Users\gragg\Projects\enhanced_garmin_golf_analytics\Data")
 
 
-def load_rounds(con, rounds):
+def load_rounds(con, rounds_stage):
     """Insert rounds into DuckDB."""
 
-    rows = [round_to_dict(r) for r in rounds]
+    rows = [round_to_dict(r) for r in rounds_stage]
 
     con.executemany(
         """
-        INSERT OR REPLACE INTO rounds (
+        INSERT OR REPLACE INTO rounds_stage (
             round_id,
             course_id,
             course,
@@ -26,12 +26,16 @@ def load_rounds(con, rounds):
             tee_box,
             tee_rating,
             tee_slope,
-            holes_completed
+            holes_completed,
+            temp_f,
+            wind_speed_mph,
+            precip_mm, 
+            steps
         )
         VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
-                """,
+        """,
         [
             (
                 r["round_id"],
@@ -45,30 +49,34 @@ def load_rounds(con, rounds):
                 r["tee_rating"],
                 r["tee_slope"],
                 r["holes_completed"],
+                r["temp_f"],
+                r["wind_speed_mph"],
+                r["precip_mm"],
+                r["steps"],
             )
             for r in rows
         ],
     )
 
 
-def load_holes(con, rounds):
+def load_holes(con, rounds_stage):
     """Insert holes into DuckDB."""
 
     hole_rows = []
 
-    for r in rounds:
+    for r in rounds_stage:
         hole_rows.extend(holes_to_dicts(r))
 
     con.executemany(
         """
-        INSERT OR REPLACE INTO holes (
+        INSERT OR REPLACE INTO holes_stage (
             round_id,
             hole,
             par,
             strokes,
             putts,
             penalties,
-            handicap_score,
+            hole_handicap,
             fairway_outcome
         )
         VALUES (
@@ -83,7 +91,7 @@ def load_holes(con, rounds):
                 h["strokes"],
                 h["putts"],
                 h["penalties"],
-                h["handicap_score"],
+                h["hole_handicap"],
                 h["fairway_outcome"],
             )
             for h in hole_rows
@@ -95,7 +103,7 @@ def main():
 
     con = duckdb.connect(DATABASE_PATH)
 
-    json_files = sorted(DATA_DIR.glob("*.json"))
+    json_files = sorted(DATA_DIR.glob("scorecard_*.json"))
 
     if not json_files:
         raise FileNotFoundError(
@@ -130,9 +138,7 @@ def main():
     finally:
         con.close()
 
-    print(f"Loaded {total_rounds} rounds.")
-    print(f"Loaded {total_holes} holes.")
-    print("Load complete.")         
+    print("Load complete.")
 
 
 if __name__ == "__main__":

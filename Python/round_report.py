@@ -2,6 +2,7 @@ import duckdb
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+import pandas as pd
 
 
 DB_PATH = r"C:\Users\gragg\Projects\enhanced_garmin_golf_analytics\DB\golf.duckdb"
@@ -11,17 +12,17 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("Latest Round Analysis")
+st.title("Round Report")
 
 con = duckdb.connect(DB_PATH)
 
 df = con.execute(
-"""
+ """
         WITH latest_round AS(
             SELECT
                 MAX(rounds.start_time) AS start_time
-            FROM rounds
-            JOIN holes 
+            FROM rounds_stage rounds
+            JOIN holes_stage holes
                 ON holes.round_id = rounds.round_id
             WHERE holes.putts IS NOT NULL
             GROUP BY ALL
@@ -34,10 +35,10 @@ df = con.execute(
                 rounds.tee_box,
                 rounds.round_id,
                 SUM(holes.strokes) AS total_strokes
-            FROM rounds
+            FROM rounds_stage rounds
             LEFT JOIN latest_round
                 ON latest_round.start_time = rounds.start_time
-            JOIN holes 
+            JOIN holes_stage holes
                 ON holes.round_id = rounds.round_id
             WHERE 1=1
                 AND holes.putts IS NOT NULL
@@ -54,43 +55,73 @@ df = con.execute(
                 AVG(holes.strokes) AS avg_strokes,
                 holes.par,
                 COUNT(*) AS played_count
-            FROM holes
-            JOIN rounds
+            FROM holes_stage holes
+            JOIN rounds_stage rounds
+                ON holes.round_id = rounds.round_id
+            LEFT JOIN latest_round
+                ON latest_round.start_time = rounds.start_time
+                AND latest_round.start_time IS NULL
+            WHERE 1=1
+                AND holes.putts IS NOT NULL
+            GROUP BY ALL
+        ), 
+
+        rounds_stats AS (
+            SELECT
+                rounds.course,
+                rounds.tee_box,
+                rounds.round_id, 
+                holes.hole,
+                holes.strokes, 
+                holes.putts,
+                holes.par,
+                holes.penalties,
+                rounds.tee_slope, 
+                (SUM(holes.strokes) OVER (PARTITION BY rounds.round_id)
+                 - rounds.tee_rating)*(113/rounds.tee_slope) AS handicap_diff
+            FROM rounds_stage rounds
+            JOIN holes_stage holes
                 ON holes.round_id = rounds.round_id
             LEFT JOIN latest_round
                 ON latest_round.start_time = rounds.start_time
             WHERE 1=1
                 AND holes.putts IS NOT NULL
-                AND latest_round.start_time IS NULL
-            GROUP BY ALL
-            HAVING played_count >=3
-        ), 
+                AND latest_round.start_time = rounds.start_time
+        ),
 
         comparison AS (
             SELECT 
+                rounds.round_id, 
                 rounds.course,
                 rounds.tee_box,
                 holes.hole,
                 holes.strokes, 
                 holes.putts,
+                CASE WHEN holes.strokes - holes.putts <= holes.par-2 THEN 1 ELSE 0 END AS GIR,
+                CASE WHEN holes.strokes - holes.putts <= holes.par-1 THEN 1 ELSE 0 END AS BGIR,
                 holes.par,
+                holes.penalties,
                 holes.strokes - holes_scores.avg_strokes AS diff_from_avg, 
                 holes.strokes - best_round_holes.strokes AS diff_from_best,
+                rounds_stats.handicap_diff AS round_handicap_differential,
+                rounds.start_time, 
+                rounds.end_time, 
+                rounds.temp_f,
+                rounds.wind_speed_mph,
+                COALESCE(rounds.precip_mm, 0) AS precip_mm,
 
-                SUM(holes.strokes - best_round_holes.strokes) OVER (
-                    ORDER BY holes.hole
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                ) AS running_diff_from_best,    
+                SUM(holes.strokes - holes_scores.avg_strokes)
+                    OVER (PARTITION BY rounds.round_id ORDER BY holes.hole) AS running_diff_from_avg,
+                
+                SUM(holes.strokes - best_round_holes.strokes) 
+                    OVER (PARTITION BY rounds.round_id ORDER BY holes.hole) AS running_diff_from_best, 
 
-                SUM(holes.strokes - holes_scores.avg_strokes) OVER (
-                    ORDER BY holes.hole
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                ) AS running_diff_from_avg
+                rounds.steps
 
             FROM latest_round
-            JOIN rounds
+            JOIN rounds_stage rounds
                 ON latest_round.start_time = rounds.start_time
-            JOIN holes
+            JOIN holes_stage holes
                 ON holes.round_id = rounds.round_id
             JOIN holes_scores
                 ON holes.hole = holes_scores.hole
@@ -98,9 +129,12 @@ df = con.execute(
             LEFT JOIN best_round 
                 ON best_round.course = rounds.course
                 AND best_round.tee_box = rounds.tee_box
-            LEFT JOIN holes AS best_round_holes
+            LEFT JOIN holes_stage AS best_round_holes
                 ON best_round_holes.round_id = best_round.round_id
                 AND best_round_holes.hole = holes.hole
+            JOIN rounds_stats
+                ON rounds_stats.round_id = rounds.round_id
+                AND rounds_stats.hole = holes.hole
             WHERE 1=1
                 AND holes.putts IS NOT NULL
             ORDER BY holes.hole)
@@ -113,9 +147,20 @@ df = con.execute(
 # --------------------
 # Top metrics
 # --------------------
-top1, top2, top3 = st.columns([3, 1, 1])
-mid1, mid2, mid3 = st.columns(3)
-bot1, bot2, bot3, bot4 = st.columns(4)
+
+total_strokes = df["strokes"].sum()
+total_par = df["par"].sum()
+
+duration = df["end_time"].iloc[0] - df["start_time"].iloc[0]
+
+minutes = int(duration.total_seconds() // 60)
+hours = minutes // 60
+minutes = minutes % 60
+
+top1, top2 = st.columns([3, 1])
+st.divider()
+mid1, mid2, mid3, mid4, mid5 = st.columns(5)
+bot1, bot2, bot3, bot4, bot5 = st.columns(5)
 
 with top1:
     st.metric(
@@ -129,16 +174,10 @@ with top2:
         df["tee_box"].iloc[0]
     )
 
-with top3:
-    st.metric(
-        "Par",
-        f"{df['par'].sum():.0f}"
-    )
-
 with mid1:
     st.metric(
-        "Strokes",
-        f"{df['strokes'].sum():.0f}"
+        label="Strokes / Par",
+        value=f"{total_strokes:.0f}/{total_par:.0f}"
     )
 
 with mid2:
@@ -149,20 +188,51 @@ with mid2:
 
 with mid3:
     st.metric(
+        "Handicap Differential",
+        f"{df.loc[df["round_handicap_differential"].idxmin(), "round_handicap_differential"]:.2f}"
+    )
+
+
+with mid4:
+    st.metric(
         "Putts Avg.",
         f"{df['putts'].mean():.1f}"
     )
 
+with mid5:
+    st.metric(
+        "GIR",
+        f"{df['GIR'].sum():.0f}"
+    )
+
+with bot1:
+    st.metric(
+        "Round Duration",
+        f"{hours}h {minutes}m"
+    )
+
+with bot2:
+    st.metric(
+        "Steps",
+        df["steps"].iloc[0]
+    )
+
 with bot3:
     st.metric(
-        "Best Hole",
-        int(df.loc[df["diff_from_avg"].idxmin(), "hole"])
+        "Temp",
+        int(df["temp_f"].iloc[0])
     )
 
 with bot4:
     st.metric(
-        "Worst Hole",
-        int(df.loc[df["diff_from_avg"].idxmax(), "hole"])
+        "Wind Speed",
+        int(df["wind_speed_mph"].iloc[0])
+    )
+
+with bot5:
+    st.metric(
+        "Precipitation",
+        int(df["precip_mm"].iloc[0])
     )
 
 st.divider()
@@ -190,7 +260,7 @@ with left:
             y=y,
             mode="lines+markers",
             line=dict(color="aliceblue", width=3),
-            marker=dict(color="aliceblue", size=4),
+            marker=dict(color="aliceblue", size=7),
             showlegend=False,
         )
     )
@@ -311,7 +381,7 @@ with right:
             y=y,
             mode="lines+markers",
             line=dict(color="aliceblue", width=3),
-            marker=dict(color="aliceblue", size=4),
+            marker=dict(color="aliceblue", size=7),
             showlegend=False,
         )
     )
@@ -418,11 +488,95 @@ with right:
 # --------------------
 # Detail table
 # --------------------
+st.subheader("Scorecard Detail")
 
-st.subheader("Hole Details")
+scorecard_df = (
+    df[
+        [
+            "hole",
+            "strokes",
+            "putts",
+            "GIR",
+            "BGIR",
+            "par",
+            "penalties",
+        ]
+    ]
+    .rename(
+        columns={
+            "hole": "Hole",
+            "strokes": "Strokes",
+            "putts": "Putts",
+            "GIR": "GIR",
+            "BGIR": "BGIR",
+            "par": "Par",
+            "penalties": "Penalties",
+        }
+    )
+)
+
+# Score relative to par
+scorecard_df["Score"] = scorecard_df["Strokes"] - scorecard_df["Par"]
+
+scorecard_df = scorecard_df[
+    [
+        "Hole",
+        "Par",
+        "Strokes",
+        "Score",
+        "Putts",
+        "GIR",
+        "BGIR",
+        "Penalties",
+    ]
+]
+
+scorecard_df["Strokes"] = scorecard_df["Strokes"].astype(str)
+
+def highlight_gir(val):
+    return "background-color: #1c7007; color: white;" if val else ""
+
+
+def highlight_bgir(val):
+    return "background-color: #55a142; color: white;" if val else ""
+
+def highlight_penalty(val):
+    return (
+        "background-color: #d32f2f; color: white;"
+        if val > 0
+        else ""
+    )
+
+def highlight_score(val):
+    colors = {
+        -2: "background-color: #006100; color: white;", 
+        -1: "background-color: #3B7D04; color: black;",  
+         0: "background-color: #6BA409; color: white;", 
+         1: "background-color: #ADB30B; color: black;",  
+         2: "background-color: #98680B; color: black;",  
+    }
+
+    if val >= 3:
+        return "background-color: #85230B; color: white;"  
+    return colors.get(val, "")
+
+styled = (
+    scorecard_df.style
+    .map(highlight_gir, subset=["GIR"])
+    .map(highlight_bgir, subset=["BGIR"])
+    .map(highlight_penalty, subset=["Penalties"])
+    .map(highlight_score, subset=["Score"])
+    .format({
+        "Score": lambda x: f"+{x}" if x > 0 else str(x),
+        "GIR": lambda x: "✓" if x else "",
+        "BGIR": lambda x: "✓" if x else "",
+    })
+)
 
 st.dataframe(
-    df,
+    styled,
     width="stretch",
-    hide_index=True
+    hide_index=True,
 )
+
+con.close()
